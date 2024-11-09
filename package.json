@@ -3,6 +3,10 @@
   "displayName": "cit-tools",
   "description": "simple version control for single files using cit",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/daniel-bf/cit-tools.git"
+  },
   "engines": {
     "vscode": "^1.95.0"
   },
