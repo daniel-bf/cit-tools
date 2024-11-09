@@ -1,0 +1,113 @@
+{
+  "name": "cit-tools",
+  "displayName": "cit-tools",
+  "description": "simple version control for single files using cit",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cittools-sidebar",
+          "title": "Cit-tools",
+          "icon": "resources/cit.svg"
+        }
+      ]
+    },
+    "views": {
+      "cittools-sidebar": [
+        {
+          "id": "cittools.fileTreeView",
+          "name": "File Tree"
+        }
+      ]
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "cittools.commit",
+          "when": "view == cittools.fileTreeView && viewItem == file",
+          "group": "inline",
+          "icon": "resources/commit.svg"
+        },
+        {
+          "command": "cittools.add",
+          "when": "view == cittools.fileTreeView && viewItem == file",
+          "group": "inline"
+        },
+        {
+          "command": "cittools.switch",
+          "when": "view == cittools.fileTreeView && viewItem == file",
+          "group": "inline"
+        },
+        {
+          "command": "cittools.init",
+          "when": "view == cittools.fileTreeView && viewItem == file",
+          "group": "inline"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "cittools.commit",
+        "title": "Commit",
+        "icon": {
+          "light": "resources/light/commit.svg",
+          "dark": "resources/dark/commit.svg"
+        }
+      },
+      {
+        "command": "cittools.switch",
+        "title": "Switch",
+        "icon": {
+          "light": "resources/light/switch.svg",
+          "dark": "resources/dark/switch.svg"
+        }
+      },
+      {
+        "command": "cittools.add",
+        "title": "Add",
+        "icon": {
+          "light": "resources/light/add.svg",
+          "dark": "resources/dark/add.svg"
+        }
+      },
+      {
+        "command": "cittools.init",
+        "title": "Init",
+        "icon": {
+          "light": "resources/light/init.svg",
+          "dark": "resources/dark/init.svg"
+        }
+      }
+    ]
+  },
+  
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.95.0",
+    "@types/mocha": "^10.0.9",
+    "@types/node": "20.x",
+    "@typescript-eslint/eslint-plugin": "^8.10.0",
+    "@typescript-eslint/parser": "^8.7.0",
+    "eslint": "^9.13.0",
+    "typescript": "^5.6.3",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1"
+  }
+}
