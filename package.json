@@ -1,8 +1,9 @@
 {
   "name": "cit-tools",
-  "displayName": "cit-tools",
-  "description": "simple version control for single files using cit",
-  "version": "0.0.1",
+  "displayName": "Cit — Single File Version Control",
+  "description": "Version control for individual files. Track named snapshots, switch between configs, without touching git.",
+  "version": "0.1.0",
+  "publisher": "daniel-bf",
   "repository": {
     "type": "git",
     "url": "https://github.com/daniel-bf/cit-tools.git"
@@ -11,17 +12,19 @@
     "vscode": "^1.95.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "SCM Providers"
   ],
+  "keywords": ["version control", "config management", "snapshots", "cit"],
   "activationEvents": [],
   "main": "./out/extension.js",
-  
+
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
           "id": "cittools-sidebar",
-          "title": "Cit-tools",
+          "title": "Cit",
           "icon": "resources/cit.svg"
         }
       ]
@@ -30,71 +33,103 @@
       "cittools-sidebar": [
         {
           "id": "cittools.fileTreeView",
-          "name": "File Tree"
+          "name": "Files"
+        },
+        {
+          "id": "cittools.versionView",
+          "name": "Versions"
         }
       ]
     },
     "menus": {
-      "view/item/context": [
+      "view/title": [
         {
-          "command": "cittools.commit",
-          "when": "view == cittools.fileTreeView && viewItem == file",
-          "group": "inline",
-          "icon": "resources/commit.svg"
+          "command": "cittools.refresh",
+          "when": "view == cittools.fileTreeView",
+          "group": "navigation"
         },
         {
           "command": "cittools.add",
-          "when": "view == cittools.fileTreeView && viewItem == file",
-          "group": "inline"
+          "when": "view == cittools.versionView",
+          "group": "navigation"
         },
         {
-          "command": "cittools.switch",
-          "when": "view == cittools.fileTreeView && viewItem == file",
+          "command": "cittools.commit",
+          "when": "view == cittools.versionView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cittools.init",
+          "when": "view == cittools.fileTreeView && viewItem == file-untracked",
           "group": "inline"
         },
         {
           "command": "cittools.init",
-          "when": "view == cittools.fileTreeView && viewItem == file",
+          "when": "view == cittools.fileTreeView && viewItem == file-tracked",
+          "group": "cit@1"
+        },
+        {
+          "command": "cittools.add",
+          "when": "view == cittools.fileTreeView && viewItem == file-tracked",
+          "group": "inline"
+        },
+        {
+          "command": "cittools.commit",
+          "when": "view == cittools.fileTreeView && viewItem == file-tracked",
+          "group": "inline"
+        },
+        {
+          "command": "cittools.switch",
+          "when": "view == cittools.versionView && viewItem == version",
+          "group": "inline"
+        },
+        {
+          "command": "cittools.remove",
+          "when": "view == cittools.versionView && viewItem == version",
           "group": "inline"
         }
       ]
     },
     "commands": [
       {
-        "command": "cittools.commit",
-        "title": "Commit",
-        "icon": {
-          "light": "resources/light/commit.svg",
-          "dark": "resources/dark/commit.svg"
-        }
-      },
-      {
-        "command": "cittools.switch",
-        "title": "Switch",
-        "icon": {
-          "light": "resources/light/switch.svg",
-          "dark": "resources/dark/switch.svg"
-        }
+        "command": "cittools.init",
+        "title": "Cit: Initialize",
+        "icon": "$(add)"
       },
       {
         "command": "cittools.add",
-        "title": "Add",
-        "icon": {
-          "light": "resources/light/add.svg",
-          "dark": "resources/dark/add.svg"
-        }
+        "title": "Cit: Save Version",
+        "icon": "$(save)"
       },
       {
-        "command": "cittools.init",
-        "title": "Init",
-        "icon": {
-          "light": "resources/light/init.svg",
-          "dark": "resources/dark/init.svg"
-        }
+        "command": "cittools.commit",
+        "title": "Cit: Commit Changes",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "cittools.switch",
+        "title": "Cit: Switch Version",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "cittools.remove",
+        "title": "Cit: Remove Version",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "cittools.refresh",
+        "title": "Cit: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cittools.selectFile",
+        "title": "Cit: Select File"
       }
     ]
   },
-  
+
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",

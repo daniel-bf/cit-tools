@@ -1,238 +1,371 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
 import * as child_process from 'child_process';
 
-class FileTreeDataProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-  private _onDidChangeTreeData: vscode.EventEmitter<void | vscode.TreeItem | null | undefined> = new vscode.EventEmitter();
-  readonly onDidChangeTreeData: vscode.Event<void | vscode.TreeItem | null | undefined> = this._onDidChangeTreeData.event;
+// ---- Types -----------------------------------------------------------------
 
-  constructor(private workspaceRoot: string) {}
+interface CitVersion {
+  name: string;
+  hash: string;
+  timestamp: string | null;
+  current: boolean;
+}
 
-  // Returns tree item for a given element
-  getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
-    return element;
-  }
+interface CitListResult {
+  file: string;
+  current_version: string | null;
+  versions: CitVersion[];
+}
 
-  // Returns the children of a given element (files/subdirectories)
-  async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
-    if (!element) {
-      return this.getFilesInDirectory(this.workspaceRoot);
-    }
+// ---- Version History Tree --------------------------------------------------
 
-    if (element.collapsibleState === vscode.TreeItemCollapsibleState.Collapsed) {
-      return this.getFilesInDirectory(element.resourceUri?.fsPath || '');
-    }
+class VersionItem extends vscode.TreeItem {
+  constructor(
+    public readonly version: CitVersion,
+    public readonly filePath: string,
+  ) {
+    super(version.name, vscode.TreeItemCollapsibleState.None);
 
-    return [];
-  }
+    const ts = version.timestamp
+      ? new Date(version.timestamp).toLocaleString()
+      : 'unknown date';
+    this.description = `[${version.hash}]  ${ts}`;
+    this.tooltip = `${version.name}\n${version.hash}\n${ts}`;
+    this.contextValue = version.current ? 'version-current' : 'version';
+    this.iconPath = version.current
+      ? new vscode.ThemeIcon('check', new vscode.ThemeColor('terminal.ansiGreen'))
+      : new vscode.ThemeIcon('git-commit');
 
-  private async getFilesInDirectory(directory: string): Promise<vscode.TreeItem[]> {
-    const files = await this.readDirectory(directory);
-    return files.map(file => this.createTreeItem(file, directory));
-  }
-
-  private async readDirectory(directory: string): Promise<string[]> {
-    return new Promise((resolve, reject) => {
-      fs.readdir(directory, (err, files) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve(files);
-      });
-    });
-  }
-
-  private createTreeItem(fileName: string, directory: string): vscode.TreeItem {
-    const fullPath = path.join(directory, fileName);
-    const stat = fs.statSync(fullPath);
-
-    const treeItem = new vscode.TreeItem(
-      fullPath,
-      stat.isDirectory() ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
-    );
-
-    if (!stat.isDirectory()) {
-      treeItem.label = fileName;
-      treeItem.contextValue = 'file';
-      treeItem.command = {
-        command: 'cittools.openFile',
-        title: 'Open File',
-        arguments: [vscode.Uri.file(fullPath)]
+    if (!version.current) {
+      this.command = {
+        command: 'cittools.switch',
+        title: 'Switch to version',
+        arguments: [filePath, version.name],
       };
-    } else {
-      treeItem.label = fileName;
-      treeItem.contextValue = 'directory';
     }
+  }
+}
 
-    treeItem.resourceUri = vscode.Uri.file(fullPath);
-    
-    treeItem.iconPath = stat.isDirectory() 
-      ? new vscode.ThemeIcon('folder')
-      : new vscode.ThemeIcon('file');
+class VersionTreeProvider implements vscode.TreeDataProvider<VersionItem> {
+  private _onChange = new vscode.EventEmitter<void>();
+  readonly onDidChangeTreeData = this._onChange.event;
 
-    return treeItem;
+  private currentFile: string | null = null;
+
+  setFile(filePath: string | null): void {
+    this.currentFile = filePath;
+    this._onChange.fire();
   }
 
   refresh(): void {
-    this._onDidChangeTreeData.fire();
+    this._onChange.fire();
+  }
+
+  getTreeItem(element: VersionItem): vscode.TreeItem {
+    return element;
+  }
+
+  async getChildren(): Promise<VersionItem[]> {
+    if (!this.currentFile) {
+      return [];
+    }
+    const result = await runCit([this.currentFile, '--list', '--json']);
+    if (!result.success || !result.stdout) {
+      return [];
+    }
+    try {
+      const data: CitListResult = JSON.parse(result.stdout);
+      return data.versions.map(v => new VersionItem(v, this.currentFile!));
+    } catch {
+      return [];
+    }
   }
 }
 
+// ---- Tracked Files Tree ----------------------------------------------------
 
+class FileItem extends vscode.TreeItem {
+  constructor(
+    public readonly filePath: string,
+    public readonly tracked: boolean,
+  ) {
+    super(path.basename(filePath), vscode.TreeItemCollapsibleState.None);
+    this.resourceUri = vscode.Uri.file(filePath);
+    this.contextValue = tracked ? 'file-tracked' : 'file-untracked';
+    this.iconPath = new vscode.ThemeIcon(tracked ? 'versions' : 'file');
+    this.tooltip = tracked ? `${filePath} (tracked by cit)` : `${filePath} (not tracked)`;
+    this.description = tracked ? undefined : 'not tracked';
+    this.command = {
+      command: 'cittools.selectFile',
+      title: 'Select file',
+      arguments: [filePath],
+    };
+  }
+}
 
+class FileTreeProvider implements vscode.TreeDataProvider<FileItem> {
+  private _onChange = new vscode.EventEmitter<void>();
+  readonly onDidChangeTreeData = this._onChange.event;
+
+  constructor(private workspaceRoot: string) {}
+
+  refresh(): void {
+    this._onChange.fire();
+  }
+
+  getTreeItem(element: FileItem): vscode.TreeItem {
+    return element;
+  }
+
+  async getChildren(): Promise<FileItem[]> {
+    const files = this.listFiles(this.workspaceRoot);
+    const items = await Promise.all(
+      files.map(async f => new FileItem(f, await isTrackedByCit(f)))
+    );
+    return items.sort((a, b) => {
+      if (a.tracked !== b.tracked) { return a.tracked ? -1 : 1; }
+      return a.filePath.localeCompare(b.filePath);
+    });
+  }
+
+  private listFiles(dir: string): string[] {
+    const { readdirSync, statSync } = require('fs') as typeof import('fs');
+    try {
+      return readdirSync(dir)
+        .filter(e => !e.startsWith('.') && e !== 'node_modules')
+        .map(e => path.join(dir, e))
+        .filter(p => { try { return statSync(p).isFile(); } catch { return false; } });
+    } catch {
+      return [];
+    }
+  }
+}
+
+// ---- Helpers ---------------------------------------------------------------
+
+async function isTrackedByCit(filePath: string): Promise<boolean> {
+  const result = await runCit([filePath, '--status']);
+  return result.success && !result.stdout.includes('not tracked');
+}
+
+function runCit(args: string[]): Promise<{ success: boolean; stdout: string; stderr: string }> {
+  return new Promise(resolve => {
+    // Quote the first argument (file path) to handle spaces
+    const quotedArgs = args.map((a, i) => (i === 0 ? `"${a}"` : a));
+    child_process.exec(`cit ${quotedArgs.join(' ')}`, (error, stdout, stderr) => {
+      resolve({ success: !error, stdout: stdout.trim(), stderr: stderr.trim() });
+    });
+  });
+}
+
+function getWorkspaceRoot(): string | null {
+  const folders = vscode.workspace.workspaceFolders;
+  return folders && folders.length > 0 ? folders[0].uri.fsPath : null;
+}
+
+function resolveFilePath(item: unknown): string | null {
+  if (item instanceof FileItem) { return item.filePath; }
+  if (item instanceof vscode.Uri) { return item.fsPath; }
+  return vscode.window.activeTextEditor?.document.uri.fsPath ?? null;
+}
+
+// ---- Activation ------------------------------------------------------------
 
 export function activate(context: vscode.ExtensionContext) {
-  const workspaceRoot = vscode.workspace.rootPath || '';
-  
+  const workspaceRoot = getWorkspaceRoot();
   if (!workspaceRoot) {
-    vscode.window.showInformationMessage('No workspace is open');
+    vscode.window.showInformationMessage('Cit-tools: no workspace folder is open.');
     return;
   }
 
-  const treeDataProvider = new FileTreeDataProvider(workspaceRoot);
+  const versionProvider = new VersionTreeProvider();
+  const fileProvider = new FileTreeProvider(workspaceRoot);
+
   const fileTreeView = vscode.window.createTreeView('cittools.fileTreeView', {
-    treeDataProvider: treeDataProvider,
+    treeDataProvider: fileProvider,
   });
 
-  // Register commands for each context menu item
-  const commitCommand = vscode.commands.registerCommand('cittools.commit', (item: vscode.TreeItem) => {
-    if (!item.resourceUri) {
-      vscode.window.showErrorMessage('No file selected');
-      return;
-    }
-    vscode.window.showInformationMessage(`Commit selected file: ${item.resourceUri.fsPath}`);
-    runGitCommand(item.resourceUri, `cit ${item.resourceUri.fsPath} --commit`);
+  const versionTreeView = vscode.window.createTreeView('cittools.versionView', {
+    treeDataProvider: versionProvider,
   });
 
-  const switchCommand = vscode.commands.registerCommand('cittools.switch', (item: vscode.TreeItem) => {
-    if (!item.resourceUri) {
-      vscode.window.showErrorMessage('No file selected');
-      return;
-    }
-    vscode.window.showInformationMessage(`Switch selected file: ${item.resourceUri.fsPath}`);
-    runGitCommand(item.resourceUri, `cit ${item.resourceUri.fsPath} --switch`);
+  // Keep version panel in sync with the active editor
+  const editorListener = vscode.window.onDidChangeActiveTextEditor(editor => {
+    versionProvider.setFile(editor?.document.uri.fsPath ?? null);
   });
 
-  const addCommand = vscode.commands.registerCommand('cittools.add', (item: vscode.TreeItem) => {
-    if (!item.resourceUri) {
-      vscode.window.showErrorMessage('No file selected');
-      return;
-    }
-    vscode.window.showInformationMessage(`Adding version for file: ${item.resourceUri.fsPath}`);
-    // Implement your add logic here
-    runGitCommand(item.resourceUri, `cit ${item.resourceUri.fsPath} --add`);
-  });
-  
-  const initCommand = vscode.commands.registerCommand('cittools.init', (item: vscode.TreeItem) => {
-    if (!item.resourceUri) {
-      vscode.window.showErrorMessage('No file selected');
-      return;
-    }
-    vscode.window.showInformationMessage(`Initializing cit for: ${item.resourceUri.fsPath}`);
-    // Implement your add logic here (e.g., staging the file in Git)
-    runGitCommand(item.resourceUri, `cit ${item.resourceUri.fsPath} --init`);
-  });
-
-  const openFileCommand = vscode.commands.registerCommand('cittools.openFile', (uri: vscode.Uri) => {
-    vscode.workspace.openTextDocument(uri).then(doc => {
-      vscode.window.showTextDocument(doc);
-    });
-  });
-
-  context.subscriptions.push(commitCommand);
-  context.subscriptions.push(switchCommand);
-  context.subscriptions.push(addCommand);
-  context.subscriptions.push(initCommand);
-  context.subscriptions.push(openFileCommand);
-  context.subscriptions.push(fileTreeView);
-}
-
-// Helper function to run git commands
-async function runGitCommand(uri: vscode.Uri, command: string) {
-
-
-  // Add version  if command is add
-  if(command.includes('add')){
-    const versionName = await vscode.window.showInputBox({
-      prompt: 'Enter new version name',
-      placeHolder: 'version_name'
-    });
-    
-    if (!versionName) {
-      vscode.window.showWarningMessage('Adding version cancelled - no version name provided');
-      return;
-    }
-    
-    command = command + ` ${versionName}`;
+  if (vscode.window.activeTextEditor) {
+    versionProvider.setFile(vscode.window.activeTextEditor.document.uri.fsPath);
   }
 
-  // select from list of versions if command is switch
-  if(command.includes('switch')){
-    // Get list of versions
-    const versions = await new Promise<string[]>((resolve, reject) => {
-      const listCommand = `cit ${uri.fsPath} --list`;
-      const cp = require('child_process');
-      cp.exec(listCommand, { cwd: vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath }, (error: any, stdout: string, stderr: string) => {
-        if (error) {
-          reject(error);
+  // ---- Commands ------------------------------------------------------------
+
+  const selectFileCmd = vscode.commands.registerCommand(
+    'cittools.selectFile',
+    (filePath: string) => {
+      versionProvider.setFile(filePath);
+      vscode.workspace.openTextDocument(vscode.Uri.file(filePath))
+        .then(doc => vscode.window.showTextDocument(doc));
+    }
+  );
+
+  const initCmd = vscode.commands.registerCommand(
+    'cittools.init',
+    async (item?: unknown) => {
+      const filePath = resolveFilePath(item);
+      if (!filePath) { return; }
+      const result = await runCit([filePath, '--init']);
+      if (result.success) {
+        vscode.window.showInformationMessage(`Cit: initialized '${path.basename(filePath)}'`);
+        fileProvider.refresh();
+        versionProvider.setFile(filePath);
+      } else {
+        vscode.window.showErrorMessage(`Cit init failed: ${result.stderr}`);
+      }
+    }
+  );
+
+  const addCmd = vscode.commands.registerCommand(
+    'cittools.add',
+    async (item?: unknown) => {
+      const filePath = resolveFilePath(item);
+      if (!filePath) { return; }
+      const name = await vscode.window.showInputBox({
+        prompt: 'Version name',
+        placeHolder: 'e.g. staging, debug, v2',
+        validateInput: v => (v ? null : 'Name cannot be empty'),
+      });
+      if (!name) { return; }
+      const result = await runCit([filePath, '--add', name]);
+      if (result.success) {
+        vscode.window.showInformationMessage(`Cit: saved version '${name}'`);
+        versionProvider.refresh();
+        fileProvider.refresh();
+      } else {
+        vscode.window.showErrorMessage(`Cit add failed: ${result.stderr}`);
+      }
+    }
+  );
+
+  const commitCmd = vscode.commands.registerCommand(
+    'cittools.commit',
+    async (item?: unknown) => {
+      const filePath = resolveFilePath(item);
+      if (!filePath) { return; }
+      const result = await runCit([filePath, '--commit']);
+      if (result.success) {
+        vscode.window.showInformationMessage('Cit: committed changes to current version');
+        versionProvider.refresh();
+      } else {
+        vscode.window.showErrorMessage(`Cit commit failed: ${result.stderr}`);
+      }
+    }
+  );
+
+  const switchCmd = vscode.commands.registerCommand(
+    'cittools.switch',
+    async (filePath: string, versionName?: string) => {
+      if (!versionName) {
+        const listResult = await runCit([filePath, '--list', '--json']);
+        if (!listResult.success) {
+          vscode.window.showErrorMessage(`Failed to list versions: ${listResult.stderr}`);
           return;
         }
-        // Split output into array and remove empty lines
-        const versions = stdout.split('\n').filter(v => v.trim());
-        resolve(versions);
-      });
-    });
+        const data: CitListResult = JSON.parse(listResult.stdout);
+        const pick = await vscode.window.showQuickPick(
+          data.versions.map(v => ({
+            label: v.name,
+            description: v.current ? '(current)' : `[${v.hash}]`,
+            detail: v.timestamp ? new Date(v.timestamp).toLocaleString() : undefined,
+          })),
+          { placeHolder: 'Select version to switch to' }
+        );
+        if (!pick) { return; }
+        versionName = pick.label;
+      }
 
-	// takes all elements except first two
-	let versions_names = versions.slice(2);
-    //get only version name  splited by :
-	versions_names = versions_names.map(versions_names => versions_names.split(':')[0].trim());
-	
-	if (!versions_names.length) {
-      vscode.window.showWarningMessage('No versions available for this file');
-      return;
+      const doSwitch = async (force: boolean) => {
+        const args = force
+          ? [filePath, '--switch', versionName!, '--force']
+          : [filePath, '--switch', versionName!];
+        return runCit(args);
+      };
+
+      let result = await doSwitch(false);
+
+      if (!result.success && result.stderr.includes('uncommitted')) {
+        const choice = await vscode.window.showWarningMessage(
+          `'${path.basename(filePath)}' has uncommitted changes. Discard and switch?`,
+          'Discard & Switch', 'Cancel'
+        );
+        if (choice !== 'Discard & Switch') { return; }
+        result = await doSwitch(true);
+      }
+
+      if (result.success) {
+        vscode.window.showInformationMessage(`Cit: switched to '${versionName}'`);
+        versionProvider.refresh();
+        // Refresh the open editor so it shows the switched content
+        await vscode.commands.executeCommand('workbench.action.revertFile');
+      } else {
+        vscode.window.showErrorMessage(`Cit switch failed: ${result.stderr}`);
+      }
     }
+  );
 
-    const versionName = await vscode.window.showQuickPick(versions_names, {
-      placeHolder: 'Select version to switch to'
-    });
-    
-    if (!versionName) {
-      vscode.window.showWarningMessage('Switch cancelled - no version selected');
-      return;
+  const removeCmd = vscode.commands.registerCommand(
+    'cittools.remove',
+    async (item?: VersionItem | unknown) => {
+      let filePath: string | null;
+      let versionName: string | undefined;
+
+      if (item instanceof VersionItem) {
+        filePath = item.filePath;
+        versionName = item.version.name;
+      } else {
+        filePath = resolveFilePath(item);
+        if (!filePath) { return; }
+        const listResult = await runCit([filePath, '--list', '--json']);
+        if (!listResult.success) { return; }
+        const data: CitListResult = JSON.parse(listResult.stdout);
+        const nonCurrent = data.versions.filter(v => !v.current);
+        if (!nonCurrent.length) {
+          vscode.window.showWarningMessage('No removable versions (cannot remove the current version).');
+          return;
+        }
+        const pick = await vscode.window.showQuickPick(nonCurrent.map(v => v.name), {
+          placeHolder: 'Select version to remove',
+        });
+        if (!pick) { return; }
+        versionName = pick;
+      }
+
+      const confirmed = await vscode.window.showWarningMessage(
+        `Remove version '${versionName}'? This cannot be undone.`,
+        { modal: true },
+        'Remove'
+      );
+      if (confirmed !== 'Remove') { return; }
+
+      const result = await runCit([filePath, '--remove', versionName!]);
+      if (result.success) {
+        vscode.window.showInformationMessage(`Cit: removed version '${versionName}'`);
+        versionProvider.refresh();
+      } else {
+        vscode.window.showErrorMessage(`Cit remove failed: ${result.stderr}`);
+      }
     }
-    
-    command = command + ` ${versionName}`;
-  }
+  );
 
+  const refreshCmd = vscode.commands.registerCommand('cittools.refresh', () => {
+    fileProvider.refresh();
+    versionProvider.refresh();
+  });
 
-  const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
-  if (!workspaceFolder) {
-      vscode.window.showErrorMessage('No workspace folder found');
-      return;
-  }
-
-  const cp = require('child_process');
-  try {
-      cp.exec(command, { cwd: workspaceFolder.uri.fsPath }, (error: any, stdout: string, stderr: string) => {
-          if (error) {
-              vscode.window.showErrorMessage(`Error: ${error.message}`);
-              return;
-          }
-          if (stderr) {
-              vscode.window.showErrorMessage(`Error: ${stderr}`);
-              return;
-          }
-          vscode.window.showInformationMessage(`Success: ${stdout}`);
-      });
-  } catch (error) {
-      vscode.window.showErrorMessage(`Failed to execute command: ${error}`);
-  }
+  context.subscriptions.push(
+    fileTreeView, versionTreeView, editorListener,
+    selectFileCmd, initCmd, addCmd, commitCmd, switchCmd, removeCmd, refreshCmd,
+  );
 }
 
 export function deactivate() {}
-
-
-
