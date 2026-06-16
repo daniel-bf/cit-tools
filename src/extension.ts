@@ -17,6 +17,23 @@ interface CitListResult {
   versions: CitVersion[];
 }
 
+interface CitEnvEntry {
+  name: string;
+  created_at: string | null;
+  file_count: number | null;
+  current: boolean;
+}
+
+interface CitEnvListResult {
+  current_environment: string | null;
+  environments: CitEnvEntry[];
+}
+
+interface CitEnvStatusResult {
+  current_environment: string | null;
+  dirty_files: string[];
+}
+
 // ---- Version History Tree --------------------------------------------------
 
 class VersionItem extends vscode.TreeItem {
@@ -158,6 +175,18 @@ function runCit(args: string[]): Promise<{ success: boolean; stdout: string; std
   });
 }
 
+// Run cit with a specific working directory (for env subcommands)
+function runCitInDir(
+  cwd: string,
+  args: string[]
+): Promise<{ success: boolean; stdout: string; stderr: string }> {
+  return new Promise(resolve => {
+    child_process.exec(`cit ${args.join(' ')}`, { cwd }, (error, stdout, stderr) => {
+      resolve({ success: !error, stdout: stdout.trim(), stderr: stderr.trim() });
+    });
+  });
+}
+
 function getWorkspaceRoot(): string | null {
   const folders = vscode.workspace.workspaceFolders;
   return folders && folders.length > 0 ? folders[0].uri.fsPath : null;
@@ -167,6 +196,59 @@ function resolveFilePath(item: unknown): string | null {
   if (item instanceof FileItem) { return item.filePath; }
   if (item instanceof vscode.Uri) { return item.fsPath; }
   return vscode.window.activeTextEditor?.document.uri.fsPath ?? null;
+}
+
+// ---- Environment Tree ------------------------------------------------------
+
+class EnvItem extends vscode.TreeItem {
+  constructor(public readonly env: CitEnvEntry) {
+    super(env.name, vscode.TreeItemCollapsibleState.None);
+
+    const ts = env.created_at ? new Date(env.created_at).toLocaleString() : 'unknown';
+    const count = env.file_count ?? 0;
+    this.description = `[${ts}]  ${count} file(s)`;
+    this.tooltip = `${env.name}\nSaved: ${ts}\nFiles: ${count}`;
+    this.contextValue = env.current ? 'env-current' : 'env';
+    this.iconPath = env.current
+      ? new vscode.ThemeIcon('check', new vscode.ThemeColor('terminal.ansiGreen'))
+      : new vscode.ThemeIcon('server-environment');
+
+    if (!env.current) {
+      this.command = {
+        command: 'cittools.envSwitch',
+        title: 'Switch to environment',
+        arguments: [env.name],
+      };
+    }
+  }
+}
+
+class EnvironmentTreeProvider implements vscode.TreeDataProvider<EnvItem> {
+  private _onChange = new vscode.EventEmitter<void>();
+  readonly onDidChangeTreeData = this._onChange.event;
+
+  constructor(private workspaceRoot: string) {}
+
+  refresh(): void {
+    this._onChange.fire();
+  }
+
+  getTreeItem(element: EnvItem): vscode.TreeItem {
+    return element;
+  }
+
+  async getChildren(): Promise<EnvItem[]> {
+    const result = await runCitInDir(this.workspaceRoot, ['env', 'list', '--json']);
+    if (!result.success || !result.stdout) {
+      return [];
+    }
+    try {
+      const data: CitEnvListResult = JSON.parse(result.stdout);
+      return data.environments.map(e => new EnvItem(e));
+    } catch {
+      return [];
+    }
+  }
 }
 
 // ---- Activation ------------------------------------------------------------
@@ -180,6 +262,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const versionProvider = new VersionTreeProvider();
   const fileProvider = new FileTreeProvider(workspaceRoot);
+  const envProvider = new EnvironmentTreeProvider(workspaceRoot);
 
   const fileTreeView = vscode.window.createTreeView('cittools.fileTreeView', {
     treeDataProvider: fileProvider,
@@ -188,6 +271,33 @@ export function activate(context: vscode.ExtensionContext) {
   const versionTreeView = vscode.window.createTreeView('cittools.versionView', {
     treeDataProvider: versionProvider,
   });
+
+  const envTreeView = vscode.window.createTreeView('cittools.envView', {
+    treeDataProvider: envProvider,
+  });
+
+  // Status bar: shows current environment
+  const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  statusBar.command = 'cittools.envSwitch';
+  statusBar.tooltip = 'Cit environment — click to switch';
+  context.subscriptions.push(statusBar);
+
+  async function updateStatusBar() {
+    const result = await runCitInDir(workspaceRoot!, ['env', 'status', '--json']);
+    if (result.success && result.stdout) {
+      try {
+        const data: CitEnvStatusResult = JSON.parse(result.stdout);
+        const env = data.current_environment ?? 'no env';
+        const dirty = data.dirty_files.length > 0 ? ' ●' : '';
+        statusBar.text = `$(server-environment) ${env}${dirty}`;
+        statusBar.show();
+        return;
+      } catch { /* fall through */ }
+    }
+    statusBar.hide();
+  }
+
+  updateStatusBar();
 
   // Keep version panel in sync with the active editor
   const editorListener = vscode.window.onDidChangeActiveTextEditor(editor => {
@@ -360,11 +470,159 @@ export function activate(context: vscode.ExtensionContext) {
   const refreshCmd = vscode.commands.registerCommand('cittools.refresh', () => {
     fileProvider.refresh();
     versionProvider.refresh();
+    envProvider.refresh();
+    updateStatusBar();
   });
 
+  // ---- Environment commands ------------------------------------------------
+
+  const envInitCmd = vscode.commands.registerCommand('cittools.envInit', async () => {
+    const result = await runCitInDir(workspaceRoot, ['env', 'init']);
+    if (result.success) {
+      vscode.window.showInformationMessage('Cit: environment initialized');
+      envProvider.refresh();
+      updateStatusBar();
+    } else {
+      vscode.window.showErrorMessage(`Cit env init failed: ${result.stderr}`);
+    }
+  });
+
+  const envTrackCmd = vscode.commands.registerCommand('cittools.envTrack', async () => {
+    const files = fileProvider['listFiles'](workspaceRoot).map(f =>
+      path.relative(workspaceRoot, f)
+    );
+    if (!files.length) {
+      vscode.window.showWarningMessage('No files in workspace root to track.');
+      return;
+    }
+    const pick = await vscode.window.showQuickPick(files, {
+      placeHolder: 'Select a file to track',
+    });
+    if (!pick) { return; }
+    const result = await runCitInDir(workspaceRoot, ['env', 'track', pick]);
+    if (result.success) {
+      vscode.window.showInformationMessage(`Cit: tracking '${pick}'`);
+      envProvider.refresh();
+    } else {
+      vscode.window.showErrorMessage(`Cit env track failed: ${result.stderr}`);
+    }
+  });
+
+  const envSnapshotCmd = vscode.commands.registerCommand('cittools.envSnapshot', async () => {
+    const name = await vscode.window.showInputBox({
+      prompt: 'Environment name',
+      placeHolder: 'e.g. dev, staging, debug-verbose',
+      validateInput: v => (v ? null : 'Name cannot be empty'),
+    });
+    if (!name) { return; }
+    const result = await runCitInDir(workspaceRoot, ['env', 'snapshot', name]);
+    if (result.success) {
+      vscode.window.showInformationMessage(`Cit: saved environment '${name}'`);
+      envProvider.refresh();
+      updateStatusBar();
+    } else {
+      vscode.window.showErrorMessage(`Cit env snapshot failed: ${result.stderr}`);
+    }
+  });
+
+  const envSwitchCmd = vscode.commands.registerCommand(
+    'cittools.envSwitch',
+    async (envName?: string) => {
+      if (!envName) {
+        const listResult = await runCitInDir(workspaceRoot, ['env', 'list', '--json']);
+        if (!listResult.success || !listResult.stdout) {
+          vscode.window.showErrorMessage('No cit environments found. Run "Cit: Init Environment" first.');
+          return;
+        }
+        const data: CitEnvListResult = JSON.parse(listResult.stdout);
+        if (!data.environments.length) {
+          vscode.window.showInformationMessage('No environments saved yet. Use "Cit: Save Environment" first.');
+          return;
+        }
+        const pick = await vscode.window.showQuickPick(
+          data.environments.map(e => ({
+            label: e.name,
+            description: e.current ? '(current)' : undefined,
+            detail: e.created_at ? new Date(e.created_at).toLocaleString() : undefined,
+          })),
+          { placeHolder: 'Select environment to switch to' }
+        );
+        if (!pick) { return; }
+        envName = pick.label;
+      }
+
+      const doSwitch = async (force: boolean) =>
+        runCitInDir(workspaceRoot, force
+          ? ['env', 'switch', envName!, '--force']
+          : ['env', 'switch', envName!]
+        );
+
+      let result = await doSwitch(false);
+
+      if (!result.success && (result.stderr.includes('unsaved') || result.stderr.includes('uncommitted'))) {
+        const choice = await vscode.window.showWarningMessage(
+          `Some tracked files have unsaved changes. Discard and switch to '${envName}'?`,
+          'Discard & Switch', 'Cancel'
+        );
+        if (choice !== 'Discard & Switch') { return; }
+        result = await doSwitch(true);
+      }
+
+      if (result.success) {
+        vscode.window.showInformationMessage(`Cit: switched to environment '${envName}'`);
+        envProvider.refresh();
+        updateStatusBar();
+        // Reload any open editors that may have been changed by the switch
+        await vscode.commands.executeCommand('workbench.action.revertFile');
+      } else {
+        vscode.window.showErrorMessage(`Cit env switch failed: ${result.stderr}`);
+      }
+    }
+  );
+
+  const envDeleteCmd = vscode.commands.registerCommand(
+    'cittools.envDelete',
+    async (item?: EnvItem) => {
+      let envName: string | undefined = item?.env.name;
+
+      if (!envName) {
+        const listResult = await runCitInDir(workspaceRoot, ['env', 'list', '--json']);
+        if (!listResult.success || !listResult.stdout) { return; }
+        const data: CitEnvListResult = JSON.parse(listResult.stdout);
+        const nonCurrent = data.environments.filter(e => !e.current);
+        if (!nonCurrent.length) {
+          vscode.window.showWarningMessage('No removable environments (cannot delete the current one).');
+          return;
+        }
+        const pick = await vscode.window.showQuickPick(nonCurrent.map(e => e.name), {
+          placeHolder: 'Select environment to delete',
+        });
+        if (!pick) { return; }
+        envName = pick;
+      }
+
+      const confirmed = await vscode.window.showWarningMessage(
+        `Delete environment '${envName}'? This cannot be undone.`,
+        { modal: true },
+        'Delete'
+      );
+      if (confirmed !== 'Delete') { return; }
+
+      const result = await runCitInDir(workspaceRoot, ['env', 'delete', envName]);
+      if (result.success) {
+        vscode.window.showInformationMessage(`Cit: deleted environment '${envName}'`);
+        envProvider.refresh();
+        updateStatusBar();
+      } else {
+        vscode.window.showErrorMessage(`Cit env delete failed: ${result.stderr}`);
+      }
+    }
+  );
+
   context.subscriptions.push(
-    fileTreeView, versionTreeView, editorListener,
+    fileTreeView, versionTreeView, envTreeView, editorListener,
     selectFileCmd, initCmd, addCmd, commitCmd, switchCmd, removeCmd, refreshCmd,
+    envInitCmd, envTrackCmd, envSnapshotCmd, envSwitchCmd, envDeleteCmd,
   );
 }
 
