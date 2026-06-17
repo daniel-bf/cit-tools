@@ -136,16 +136,18 @@ class FileTreeProvider implements vscode.TreeDataProvider<FileItem> {
 
   async getChildren(): Promise<FileItem[]> {
     const files = this.listFiles(this.workspaceRoot);
-    const items = await Promise.all(
-      files.map(async f => new FileItem(f, await isTrackedByCit(f)))
-    );
+    const envTracked = getEnvTrackedFiles(this.workspaceRoot);
+    const items = files.map(f => {
+      const rel = path.relative(this.workspaceRoot, f);
+      return new FileItem(f, envTracked.has(rel));
+    });
     return items.sort((a, b) => {
       if (a.tracked !== b.tracked) { return a.tracked ? -1 : 1; }
       return a.filePath.localeCompare(b.filePath);
     });
   }
 
-  private listFiles(dir: string): string[] {
+  public listFiles(dir: string): string[] {
     const { readdirSync, statSync } = require('fs') as typeof import('fs');
     try {
       return readdirSync(dir)
@@ -160,9 +162,23 @@ class FileTreeProvider implements vscode.TreeDataProvider<FileItem> {
 
 // ---- Helpers ---------------------------------------------------------------
 
-async function isTrackedByCit(filePath: string): Promise<boolean> {
-  const result = await runCit([filePath, '--status']);
-  return result.success && !result.stdout.includes('not tracked');
+// Reads .cit/project.yaml synchronously to get env-tracked files (no subprocess).
+function getEnvTrackedFiles(workspaceRoot: string): Set<string> {
+  const yamlPath = path.join(workspaceRoot, '.cit', 'project.yaml');
+  try {
+    const { readFileSync } = require('fs') as typeof import('fs');
+    const content = readFileSync(yamlPath, 'utf8');
+    const files = new Set<string>();
+    let inList = false;
+    for (const line of content.split('\n')) {
+      if (line.startsWith('tracked_files:')) { inList = true; }
+      else if (inList && line.startsWith('  - ')) { files.add(line.slice(4).trim()); }
+      else if (inList && line.length > 0 && !line.startsWith(' ')) { break; }
+    }
+    return files;
+  } catch {
+    return new Set();
+  }
 }
 
 function runCit(args: string[]): Promise<{ success: boolean; stdout: string; stderr: string }> {
@@ -298,6 +314,22 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   updateStatusBar();
+
+  // Auto-refresh Files panel when .cit/project.yaml changes (track/untrack)
+  const yamlWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(workspaceRoot, '.cit/project.yaml')
+  );
+  yamlWatcher.onDidChange(() => fileProvider.refresh());
+  yamlWatcher.onDidCreate(() => fileProvider.refresh());
+
+  // Auto-refresh Files panel when files are added or removed from workspace root
+  const fsWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(workspaceRoot, '*')
+  );
+  fsWatcher.onDidCreate(() => fileProvider.refresh());
+  fsWatcher.onDidDelete(() => fileProvider.refresh());
+
+  context.subscriptions.push(yamlWatcher, fsWatcher);
 
   // Keep version panel in sync with the active editor
   const editorListener = vscode.window.onDidChangeActiveTextEditor(editor => {
@@ -480,6 +512,7 @@ export function activate(context: vscode.ExtensionContext) {
     const result = await runCitInDir(workspaceRoot, ['env', 'init']);
     if (result.success) {
       vscode.window.showInformationMessage('Cit: environment initialized');
+      fileProvider.refresh();
       envProvider.refresh();
       updateStatusBar();
     } else {
@@ -502,6 +535,7 @@ export function activate(context: vscode.ExtensionContext) {
     const result = await runCitInDir(workspaceRoot, ['env', 'track', pick]);
     if (result.success) {
       vscode.window.showInformationMessage(`Cit: tracking '${pick}'`);
+      fileProvider.refresh();
       envProvider.refresh();
     } else {
       vscode.window.showErrorMessage(`Cit env track failed: ${result.stderr}`);
