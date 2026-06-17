@@ -1,8 +1,8 @@
 {
   "name": "cit-tools",
   "displayName": "Cit — Single File Version Control",
-  "description": "Version control for individual files. Track named snapshots, switch between configs, without touching git.",
-  "version": "0.1.0",
+  "description": "Version control for individual files and config environment management. Track named snapshots, switch between configs, without touching git.",
+  "version": "0.2.0",
   "publisher": "daniel-bf",
   "repository": {
     "type": "git",
@@ -15,7 +15,7 @@
     "Other",
     "SCM Providers"
   ],
-  "keywords": ["version control", "config management", "snapshots", "cit"],
+  "keywords": ["version control", "config management", "snapshots", "cit", "environments"],
   "activationEvents": [],
   "main": "./out/extension.js",
 
@@ -38,6 +38,10 @@
         {
           "id": "cittools.versionView",
           "name": "Versions"
+        },
+        {
+          "id": "cittools.envView",
+          "name": "Environments"
         }
       ]
     },
@@ -57,6 +61,21 @@
           "command": "cittools.commit",
           "when": "view == cittools.versionView",
           "group": "navigation"
+        },
+        {
+          "command": "cittools.envSnapshot",
+          "when": "view == cittools.envView",
+          "group": "navigation"
+        },
+        {
+          "command": "cittools.envInit",
+          "when": "view == cittools.envView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cittools.refresh",
+          "when": "view == cittools.envView",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -88,6 +107,21 @@
         {
           "command": "cittools.remove",
           "when": "view == cittools.versionView && viewItem == version",
+          "group": "inline"
+        },
+        {
+          "command": "cittools.envSwitch",
+          "when": "view == cittools.envView && viewItem == env",
+          "group": "inline"
+        },
+        {
+          "command": "cittools.envDelete",
+          "when": "view == cittools.envView && viewItem == env",
+          "group": "inline"
+        },
+        {
+          "command": "cittools.envSnapshot",
+          "when": "view == cittools.envView && viewItem == env-current",
           "group": "inline"
         }
       ]
@@ -126,6 +160,30 @@
       {
         "command": "cittools.selectFile",
         "title": "Cit: Select File"
+      },
+      {
+        "command": "cittools.envInit",
+        "title": "Cit: Init Environment",
+        "icon": "$(add)"
+      },
+      {
+        "command": "cittools.envTrack",
+        "title": "Cit: Track File in Environment"
+      },
+      {
+        "command": "cittools.envSnapshot",
+        "title": "Cit: Save Environment",
+        "icon": "$(save)"
+      },
+      {
+        "command": "cittools.envSwitch",
+        "title": "Cit: Switch Environment",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "cittools.envDelete",
+        "title": "Cit: Delete Environment",
+        "icon": "$(trash)"
       }
     ]
   },
