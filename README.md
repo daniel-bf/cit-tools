@@ -1,13 +1,13 @@
 # Cit Tools
 
-VS Code extension for [cit](https://github.com/daniel-bf/cit) — single-file version control.
+VS Code extension for [cit](https://github.com/daniel-bf/cit) — version control for individual files and config environment management.
 
 ## What it does
 
-Track named snapshots of individual files without involving git. Useful for:
-- Config files that change between environments (dev, staging, prod)
-- Files you want multiple named variants of without cluttering your directory
-- Anything where `config.json / config_old.json / config_v2.json` is what you're doing today
+- **Single-file versioning**: track named snapshots of any file, switch between them from the sidebar
+- **Config environment management**: snapshot and restore a whole set of config files at once across named environments (dev, staging, prod)
+
+No git involvement. Nothing is committed unless you choose to.
 
 ## Requirements
 
@@ -19,46 +19,78 @@ cd cit
 make install
 ```
 
-The binary must be on your `PATH` (`/usr/local/bin/cit`).
+The binary must be available on your `PATH` at `/usr/local/bin/cit`.
 
-## How to use
+## Sidebar panels
 
-### Files panel
-The **Files** panel (Cit sidebar) shows all files in your workspace root.
-- Files already tracked by `cit` appear at the top with a versions icon
-- Untracked files show an **Initialize** button to start tracking them
+### Files
+Shows all files in your workspace root with their cit tracking status.
+- Tracked files appear at the top with a versions icon
+- Untracked files show an **Initialize** button
+- Right-click a tracked file to Add version or Commit
 
-### Versions panel
-The **Versions** panel shows all saved versions for the file open in your active editor.
-- Click a version to switch to it instantly
+### Versions
+Shows the version history for whatever file is open in your active editor.
+- Updates automatically when you switch editor tabs
+- Click any version to switch to it instantly
 - Right-click a version to remove it
-- Use the toolbar buttons to **Save Version** (snapshot) or **Commit** (update current)
+- Toolbar buttons: **Save Version**, **Commit Changes**
 
-### Commands
-All commands are also available via the Command Palette (`Ctrl+Shift+P`):
+### Environments
+Shows all saved config environments for the current project.
+- Green checkmark on the active environment
+- Click any environment to switch all tracked config files at once
+- Dirty-file indicator: if any tracked file differs from the current snapshot, a dot appears in the status bar
+- Toolbar buttons: **Save Environment**, **Init Environment**, **Refresh**
+
+## Status bar
+
+The status bar shows the current environment and a dot (`●`) when tracked files have unsaved changes:
+
+```
+⚙ staging ●
+```
+
+Click it to open the environment switcher.
+
+## Commands (Command Palette)
+
+### Single-file versioning
 
 | Command | Description |
 |---|---|
-| `Cit: Initialize` | Start tracking the active file |
+| `Cit: Initialize` | Start tracking the active file (creates a baseline version) |
 | `Cit: Save Version` | Snapshot the current file state with a name |
-| `Cit: Commit Changes` | Update the current version with unsaved edits |
-| `Cit: Switch Version` | Switch active file to a different saved version |
+| `Cit: Commit Changes` | Update the current version with the file's current content |
+| `Cit: Switch Version` | Switch the active file to a different saved version |
 | `Cit: Remove Version` | Delete a saved version |
-| `Cit: Refresh` | Refresh the file and version panels |
+| `Cit: Refresh` | Refresh all panels |
 
-## Workflow example
+### Environment management
+
+| Command | Description |
+|---|---|
+| `Cit: Init Environment` | Initialize a `.cit/` environment in the workspace root |
+| `Cit: Track File in Environment` | Add a file to the set of tracked config files |
+| `Cit: Save Environment` | Snapshot all tracked files as a named environment |
+| `Cit: Switch Environment` | Restore all tracked files to a saved environment |
+| `Cit: Delete Environment` | Remove a saved environment |
+
+## Workflow example — config environments
 
 ```
-1. Open database.yaml in your editor
-2. Cit: Initialize  →  creates "baseline" version
-3. Edit the file for staging
-4. Cit: Save Version  →  name it "staging"
-5. Edit the file for local dev
-6. Cit: Save Version  →  name it "local-dev"
+1. Cit: Init Environment
+2. Cit: Track File in Environment  →  pick config/database.yaml
+3. Cit: Track File in Environment  →  pick config/redis.yaml
+4. Cit: Save Environment           →  name it "dev"
+5. Edit configs for staging
+6. Cit: Save Environment           →  name it "staging"
 
-Now you can switch between "baseline", "staging", "local-dev" instantly.
-Changes are local — nothing goes to git unless you commit the file itself.
+Now click "dev" or "staging" in the Environments panel
+to switch all config files at once.
 ```
+
+Environments are stored in `.cit/` in your project root. Gitignore it for local-only configs, or commit it to share environments with your team.
 
 ## Known issues
 
@@ -67,9 +99,14 @@ Changes are local — nothing goes to git unless you commit the file itself.
 
 ## Release Notes
 
+### 0.2.0
+- Environments panel with atomic multi-file environment switching
+- Status bar showing current environment and dirty-file indicator
+- Five new env commands: Init, Track, Snapshot, Switch, Delete
+
 ### 0.1.0
-- Two-panel UI: Files (with tracked/untracked status) and Versions (history for active file)
+- Two-panel UI: Files (tracked/untracked status) and Versions (history for active file)
 - Version history panel auto-updates when you switch editor tabs
-- Uncommitted change detection: warns before discarding changes on switch
+- Uncommitted change detection: warns before discarding on switch
 - Remove version with confirmation dialog
 - JSON-based communication with cit CLI (no brittle text parsing)
