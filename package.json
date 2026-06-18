@@ -2,7 +2,7 @@
   "name": "cit-tools",
   "displayName": "Cit — Single File Version Control",
   "description": "Version control for individual files and config environment management. Track named snapshots, switch between configs, without touching git.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "daniel-bf",
   "repository": {
     "type": "git",
@@ -45,12 +45,40 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "cittools.fileTreeView",
+        "contents": "No config files are tracked yet.\n[Track a File](command:cittools.envTrack)\nOr [show all workspace files](command:cittools.toggleFileView) to browse and pick."
+      },
+      {
+        "view": "cittools.envView",
+        "contents": "No cit environment found in this workspace.\n[Init Environment](command:cittools.envInit)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "cittools.envSwitch",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+option+e",
+        "when": "workbenchState != empty"
+      }
+    ],
     "menus": {
       "view/title": [
         {
+          "command": "cittools.showAllFiles",
+          "when": "view == cittools.fileTreeView && !cit.showAllFiles",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cittools.showTrackedOnly",
+          "when": "view == cittools.fileTreeView && cit.showAllFiles",
+          "group": "navigation@1"
+        },
+        {
           "command": "cittools.refresh",
           "when": "view == cittools.fileTreeView",
-          "group": "navigation"
+          "group": "navigation@2"
         },
         {
           "command": "cittools.add",
@@ -100,6 +128,11 @@
           "group": "inline"
         },
         {
+          "command": "cittools.envUntrack",
+          "when": "view == cittools.fileTreeView && viewItem == file-tracked",
+          "group": "cit@2"
+        },
+        {
           "command": "cittools.switch",
           "when": "view == cittools.versionView && viewItem == version",
           "group": "inline"
@@ -118,6 +151,16 @@
           "command": "cittools.envDelete",
           "when": "view == cittools.envView && viewItem == env",
           "group": "inline"
+        },
+        {
+          "command": "cittools.envRename",
+          "when": "view == cittools.envView && viewItem == env",
+          "group": "cit@1"
+        },
+        {
+          "command": "cittools.envRename",
+          "when": "view == cittools.envView && viewItem == env-current",
+          "group": "cit@1"
         },
         {
           "command": "cittools.envSnapshot",
@@ -162,6 +205,20 @@
         "title": "Cit: Select File"
       },
       {
+        "command": "cittools.showAllFiles",
+        "title": "Cit: Show All Files",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "cittools.showTrackedOnly",
+        "title": "Cit: Show Tracked Only",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "cittools.toggleFileView",
+        "title": "Cit: Toggle File View"
+      },
+      {
         "command": "cittools.envInit",
         "title": "Cit: Init Environment",
         "icon": "$(add)"
@@ -169,6 +226,11 @@
       {
         "command": "cittools.envTrack",
         "title": "Cit: Track File in Environment"
+      },
+      {
+        "command": "cittools.envUntrack",
+        "title": "Cit: Untrack File",
+        "icon": "$(remove)"
       },
       {
         "command": "cittools.envSnapshot",
@@ -179,6 +241,11 @@
         "command": "cittools.envSwitch",
         "title": "Cit: Switch Environment",
         "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "cittools.envRename",
+        "title": "Cit: Rename Environment",
+        "icon": "$(edit)"
       },
       {
         "command": "cittools.envDelete",
