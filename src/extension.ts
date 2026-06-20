@@ -673,21 +673,24 @@ export function activate(context: vscode.ExtensionContext) {
   const envUntrackCmd = vscode.commands.registerCommand(
     'cittools.envUntrack',
     async (item?: FileItem) => {
-      let rel: string | undefined;
+      let relMut: string | undefined;
 
       if (item instanceof FileItem) {
-        rel = path.relative(workspaceRoot, item.filePath);
+        relMut = path.relative(workspaceRoot, item.filePath);
       } else {
         const tracked = [...getEnvTrackedFiles(workspaceRoot)];
         if (!tracked.length) {
           vscode.window.showWarningMessage('No files are currently tracked.');
           return;
         }
-        rel = await vscode.window.showQuickPick(tracked, {
+        relMut = await vscode.window.showQuickPick(tracked, {
           placeHolder: 'Select a file to untrack',
         });
-        if (!rel) { return; }
+        if (!relMut) { return; }
       }
+
+      // Capture in const so TypeScript keeps the string narrowing across subsequent awaits
+      const rel: string = relMut;
 
       const confirmed = await vscode.window.showWarningMessage(
         `Untrack '${rel}' from the environment? Existing snapshots are not affected.`,
